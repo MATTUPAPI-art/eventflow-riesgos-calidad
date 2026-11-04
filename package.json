@@ -1,0 +1,20 @@
+{
+  "name": "eventflow-riesgos-calidad",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node scripts/browser-check.mjs",
+    "audit:lighthouse": "node scripts/lighthouse.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "lighthouse": "^13.6.0",
+    "playwright-core": "^1.64.1"
+  }
+}

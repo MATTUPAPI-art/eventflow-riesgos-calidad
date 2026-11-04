@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Example private workspace. Test in the emulator before enabling.
+    match /users/{uid}/workspaces/{workspaceId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly([
+          'schemaVersion', 'risks', 'checks', 'revision', 'exportedRevision',
+          'lastExportAt', 'updatedAt', 'risksCounter', 'checksCounter'
+        ])
+        && request.resource.data.schemaVersion == 2
+        && request.resource.data.risks is list
+        && request.resource.data.checks is list
+        && request.resource.data.risks.size() <= 500
+        && request.resource.data.checks.size() <= 500;
+      allow delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

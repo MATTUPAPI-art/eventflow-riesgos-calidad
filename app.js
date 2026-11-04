@@ -1,202 +1,268 @@
-"use strict";
-const riskSeed = [
- ["Medidas imprecisas a partir de fotos","IA y montaje",4,5,"Equipo de IA","El mobiliario podría no caber en el espacio disponible.","Medir el salón y el mobiliario. Usar las fotos como referencia y permitir editar el plano."],
- ["Salidas o pasillos obstruidos","Seguridad física",4,5,"Responsable del recinto","El montaje puede dificultar el acceso o la evacuación.","Marcar áreas restringidas, validar el plano y obtener aprobación antes del montaje."],
- ["Acceso indebido a otro evento","Seguridad digital",4,5,"Equipo backend","Un usuario podría leer o modificar datos de otro evento.","Restringir acceso por rol y evento en Firestore. Probar con dos cuentas de eventos distintos."],
- ["Exposición de fotos y datos personales","Privacidad",4,5,"Administración","Podrían exponerse listas o imágenes de invitados, incluidos menores.","Reducir datos recopilados, restringir accesos y definir plazos de eliminación."],
- ["Caída de internet durante el evento","Operación móvil",4,3,"Equipo móvil","El personal pierde acceso al registro o al inventario.","Precargar datos, guardar movimientos pendientes y sincronizar tras la reconexión."],
- ["Registro duplicado de invitados","Check-in",4,3,"Equipo backend","Dos celulares registran la misma llegada y alteran el conteo.","Usar un identificador único por invitación y conciliar duplicados tras la sincronización."],
- ["Errores de escaneo de inventario","Inventario",4,3,"Jefe de inventario","Se registran artículos dos veces o se confunden entregas y devoluciones.","Registrar tipo de movimiento, hora y responsable. Permitir búsqueda por código."],
- ["Plano desactualizado en el móvil","Montaje",4,3,"Coordinación del evento","El personal monta el recinto con una versión anterior.","Versionar planos aprobados y notificar al equipo cuando cambien."],
- ["Asignación inadecuada de invitados","IA y montaje",4,3,"Organizador","Se separan grupos familiares o se asignan lugares poco accesibles.","Fijar grupos, cupos y necesidades de acceso. Permitir correcciones manuales."],
- ["Servicio de IA lento, caído o costoso","IA y montaje",4,3,"Equipo de IA","Un ajuste de última hora retrasa el montaje.","Guardar la última versión aprobada, habilitar edición manual y limitar el uso por evento."],
- ["Saturación durante la llegada","Check-in",4,3,"Coordinación del evento","Los registros simultáneos producen demoras y filas.","Simular la hora pico y medir los tiempos de registro con varios operadores."],
- ["Panel conectado a datos de ejemplo","Integración",5,3,"Equipo web","La interfaz muestra métricas, pero el flujo puede no guardar datos reales.","Completar un flujo entre web, base de datos y móvil y comprobar persistencia."],
- ["Alcance excesivo para la primera entrega","Proyecto",5,3,"Líder del proyecto","Las funciones esenciales podrían quedar a medias.","Hacer un piloto en un recinto y priorizar registro, inventario y plano verificable."],
- ["Falla de un celular o de su cámara","Operación móvil",3,2,"Personal de campo","Un punto de acceso deja de registrar llegadas.","Probar los equipos, preparar un celular de respaldo y habilitar búsqueda manual."]
-];
-const checkSeed = [
- ["Validar plano y circulación","IA y montaje","Comparar el plano con las medidas reales. El responsable del recinto confirma que las salidas y áreas restringidas quedan libres."],
- ["Aislar los datos por evento","Seguridad digital","Con dos cuentas de eventos distintos, comprobar que ninguna pueda leer o modificar datos de la otra."],
- ["Proteger fotos y listas de invitados","Privacidad","Verificar que una cuenta sin permisos no pueda abrir una fotografía o consultar una lista privada."],
- ["Registrar sin internet y sincronizar","Operación móvil","Activar modo avión, registrar una llegada y un movimiento, volver a conectar y verificar ambos registros en el sistema."],
- ["Evitar doble registro","Check-in","Registrar el mismo invitado desde dos celulares y verificar que el conteo final aumente solo una vez."],
- ["Conciliar inventario","Inventario","Registrar una entrega y una devolución. Comparar el saldo del sistema con el conteo físico."],
- ["Publicar un plano actualizado","Montaje","Publicar una nueva versión y verificar que el móvil muestre la versión aprobada y avise del cambio."],
- ["Verificar el flujo web → móvil → reporte","Integración","Crear un evento desde la web, registrar una llegada desde el móvil y comprobar que persista y aparezca en el reporte."],
- ["Ensayar la hora pico","Check-in","Simular 30 llegadas con dos celulares. Como meta inicial, al menos 27 se registran en cinco segundos o menos, sin duplicados."]
-];
-const key = "eventflow-control-v1";
-const initial = {
- risks: riskSeed.map(([title,area,p,i,owner,consequence,action],n)=>({id:"R-"+String(n+1).padStart(2,"0"),title,area,p,i,owner,consequence,action,status:"Abierto"})),
- checks: checkSeed.map(([title,area,criteria],n)=>({id:"Q-"+String(n+1).padStart(2,"0"),title,area,criteria,status:"Pendiente",evidence:""}))
-};
-function readState(){
- try { const saved=JSON.parse(localStorage.getItem(key)); if(Array.isArray(saved?.risks)&&Array.isArray(saved?.checks)) return saved; }
- catch {}
- return initial;
-}
-const state=readState();
-const $=id=>document.getElementById(id);
-const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
-const normalize=value=>String(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
-const score=r=>r.p*r.i;
-const rating=n=>n>=16?["Crítico","critical"]:n>=10?["Alto","high"]:n>=5?["Medio","mid"]:["Bajo","low"];
-let cell=null;
-let editing=null;
+import { score, rating, compareRisks, normalize, esc, today, recordDefaults, validateRecord, nextId, withHistory, RISK_STATUSES, CHECK_STATUSES, TYPES, backupMessage } from './src/model.js';
+import { createExampleState } from './src/seeds.js';
+import { createStorage, createLocalStorageAdapter, STORAGE_KEY } from './src/storage.js';
+import { exportCSV, previewImport } from './src/csv.js';
+
+const $ = id => document.getElementById(id);
+const storage = createStorage(createLocalStorageAdapter({ getItem: key => window.localStorage.getItem(key), setItem: (key,value) => window.localStorage.setItem(key,value) }));
+let state, persisted = null, corrupt = false, memoryOnly = false, pendingExternal = false;
+let cell = null, editing = null, focusBefore = null, preview = null, sort = { field: 'score', direction: -1 }, busy = false;
 let toastTimer;
-function persist(){
- clearTimeout(toastTimer);
- try { localStorage.setItem(key,JSON.stringify(state)); $("toast").textContent="Cambios guardados en este navegador."; }
- catch { $("toast").textContent="No se pudo guardar en el navegador. Exporta el CSV."; }
- toastTimer=setTimeout(()=>{$("toast").textContent="";},3800);
+const filters = ['search','category','statusFilter','ownerFilter','level','typeFilter'];
+const dateLabel = value => value ? new Date(value.length === 10 ? value+'T12:00:00' : value).toLocaleDateString('es-BO') : 'Sin fecha';
+const fieldNames = {title:'Nombre',area:'Área',category:'Categoría',type:'Tipo',owner:'Persona responsable',role:'Rol',status:'Estado',p:'Probabilidad',i:'Impacto',residualP:'Probabilidad residual',residualI:'Impacto residual',consequence:'Consecuencia',action:'Mitigación',contingency:'Contingencia',dueDate:'Fecha límite',reviewDate:'Próxima revisión',criteria:'Criterio',evidence:'Evidencia',evidenceDate:'Fecha de evidencia',risks:'Riesgos vinculados'};
+function toast(message) { clearTimeout(toastTimer); $('toast').textContent = message; toastTimer = setTimeout(() => $('toast').textContent = '', 5500); }
+function notice(message, external = false) { $('storageNotice').hidden = !message; $('storageMessage').textContent = message; $('reloadExternal').hidden = !external; }
+function showError(id, message) { $(id).textContent = message; $(id).hidden = !message; }
+function download(text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], {type}));
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-function renderMetrics(){
- const open=state.risks.filter(r=>r.status!=="Cerrado");
- const approved=state.checks.filter(q=>q.status==="Aprobada").length;
- $("metrics").innerHTML=[[state.risks.length,"Riesgos registrados"],[open.filter(r=>score(r)>=16).length,"Críticos sin cerrar"],[open.length,"Riesgos sin cerrar"],[approved+" / "+state.checks.length,"Pruebas aprobadas"]].map(([n,label])=>'<div class="metric"><strong>'+n+'</strong><span>'+label+'</span></div>').join("");
+async function initialize() {
+  try { persisted = await storage.getState(); state = persisted || createExampleState(); }
+  catch (error) { state = createExampleState(); corrupt = true; notice('No se pudieron cargar los datos guardados. Se muestra una vista de ejemplo sin sobrescribirlos. Descarga la copia guardada y usa «Restablecer datos de ejemplo» para recuperarte.\n'+error.message); }
+  render();
 }
-function renderMatrix(){
- let html='<div class="matrix"><span title="Probabilidad / impacto">P/I</span>';
- for(let i=1;i<=5;i++) html+="<span>"+i+"</span>";
- for(let p=5;p>=1;p--){
-  html+="<span>"+p+"</span>";
-  for(let i=1;i<=5;i++){
-   const count=state.risks.filter(r=>r.p===p&&r.i===i).length;
-   const label="Probabilidad "+p+", impacto "+i+": "+count+" riesgos";
-   html+='<button class="'+rating(p*i)[1]+'" data-cell="'+p+','+i+'" aria-label="'+label+'" title="'+label+'" aria-pressed="'+(cell?.[0]===p&&cell?.[1]===i)+'">'+count+'</button>';
+async function commit(next, {dataChange = true, reset = false} = {}) {
+  if (busy) return false;
+  if (corrupt && !reset) { toast('Restablece los datos antes de editar. La copia guardada se conserva.'); return false; }
+  busy = true;
+  try {
+    if (!reset) {
+      const latest = await storage.getState();
+      if (JSON.stringify(latest) !== JSON.stringify(persisted)) {
+        pendingExternal = true; notice('Otra pestaña cambió los datos. Cierra el diálogo y carga los cambios antes de guardar. Copia tu texto si deseas conservarlo.', true);
+        toast('No se guardó: hay cambios de otra pestaña.'); return false;
+      }
+    }
+    if (dataChange) { next.revision = Math.max(state.revision,next.revision)+1; next.updatedAt = new Date().toISOString(); }
+    await storage.saveState(next);
+    state = next; persisted = structuredClone(next); corrupt = memoryOnly = pendingExternal = false;
+    notice(''); render(); toast('Guardado en este navegador.'); return true;
+  } catch (error) {
+    if (!corrupt) { state = next; memoryOnly = true; render(); }
+    notice('No se pudo guardar. Los cambios están solo en esta pestaña: cierra el editor y exporta un CSV antes de salir.\n'+error.message);
+    toast('No se pudo guardar en el navegador.'); return false;
+  } finally { busy = false; }
+}
+function renderMetrics() {
+  const open = state.risks.filter(r=>r.status!=='Cerrado');
+  const inherent = state.risks.reduce((sum,r)=>sum+score(r),0), residual = state.risks.reduce((sum,r)=>sum+score(r,true),0);
+  const reduction = inherent ? Math.round((inherent-residual)/inherent*100) : 0;
+  const metrics = [
+    [state.risks.length,'Riesgos y problemas',`${state.risks.filter(r=>r.type==='Problema actual').length} problemas actuales`],
+    [open.filter(r=>score(r)>=16).length,'Críticos sin cerrar','Prioridad inherente'],
+    [open.filter(r=>!r.owner.trim()).length,'Sin responsable','Registros abiertos'],
+    [open.filter(r=>r.reviewDate && r.reviewDate<today()).length,'Revisión vencida','Según fecha local'],
+    [`${state.checks.filter(q=>q.status==='Aprobada').length}/${state.checks.length}`,'Pruebas aprobadas','Resultados registrados'],
+    [state.risks.filter(r=>!state.checks.some(q=>q.risks.includes(r.id))).length,'Riesgos sin prueba','Vínculo de cobertura'],
+    [`${reduction} %`,'Reducción estimada',`${inherent} → ${residual} puntos`]
+  ];
+  $('metrics').innerHTML = metrics.map(([n,label,detail],i)=>`<div class="metric ${i===1?'emphasis':''}"><strong>${n}</strong><span>${label}</span><small>${detail}</small></div>`).join('');
+  $('metrics').setAttribute('aria-busy','false');
+  $('asOf').textContent = `Actualizado · ${dateLabel(state.updatedAt)}`;
+  $('backup').textContent = memoryOnly ? 'Cambios solo en memoria. Exporta antes de salir.' : backupMessage(state) || `Respaldo exportado · ${dateLabel(state.lastExportAt)}`;
+}
+function renderMatrix() {
+  $('matrix').innerHTML = [false,true].map(residual=>{
+    const mode=residual?'residual':'inherent';
+    let html=`<div><h3 class="matrix-title">${residual?'02 · Residual':'01 · Inherente'}</h3><p class="matrix-axis">Probabilidad ↑</p><div class="matrix"><span>P/I</span>${[1,2,3,4,5].map(i=>`<span>${i}</span>`).join('')}`;
+    for(let p=5;p>=1;p--) {
+      html+=`<span>${p}</span>`;
+      for(let i=1;i<=5;i++) {
+        const matches=state.risks.filter(r=>(residual?r.residualP:r.p)===p&&(residual?r.residualI:r.i)===i);
+        const [level,css]=rating(p*i), list=matches.map(r=>r.id+' '+r.title).join('; ');
+        const symbol={Bajo:'B',Medio:'M',Alto:'A','Crítico':'!'}[level];
+        const label=`${matches.length} ${symbol} · ${residual?'Residual':'Inherente'} · ${level} · Probabilidad ${p}, impacto ${i}: ${matches.length} registros${list?' · '+list:''}`;
+        html+=`<button type="button" class="${css}" data-cell="${mode},${p},${i}" aria-label="${esc(label)}" title="${esc(label)}" aria-pressed="${cell?.mode===mode&&cell.p===p&&cell.i===i}">${matches.length} <small>${symbol}</small></button>`;
+      }
+    }
+    return html+'</div><p class="matrix-axis">Impacto →</p></div>';
+  }).join('');
+}
+function refreshOptions(id, values, label) {
+  const selected=$(id).value;
+  $(id).innerHTML=`<option value="">${label}</option>`+[...new Set(values)].sort((a,b)=>a.localeCompare(b,'es')).map(v=>`<option value="${esc(v)}">${esc(v==='_unassigned'?'Sin asignar':v)}</option>`).join('');
+  $(id).value=[...$(id).options].some(option=>option.value===selected)?selected:'';
+}
+function renderRisks() {
+  const query=normalize($('search').value.trim());
+  const risks=state.risks.filter(r=>{
+    const p=cell?.mode==='residual'?r.residualP:r.p, i=cell?.mode==='residual'?r.residualI:r.i;
+    return (!cell||(p===cell.p&&i===cell.i))&&(!$('category').value||r.category===$('category').value)&&(!$('statusFilter').value||r.status===$('statusFilter').value)&&(!$('ownerFilter').value||(r.owner||'_unassigned')===$('ownerFilter').value)&&(!$('level').value||rating(score(r))[0]===$('level').value)&&(!$('typeFilter').value||r.type===$('typeFilter').value)&&normalize([r.id,r.title,r.area,r.owner,r.role].join(' ')).includes(query);
+  }).sort((a,b)=>{
+    if(sort.field==='score') return sort.direction===-1?compareRisks(a,b):compareRisks(b,a);
+    return sort.direction*String(a[sort.field]).localeCompare(String(b[sort.field]),'es')||compareRisks(a,b);
+  });
+  $('riskCount').textContent=`${risks.length} / ${state.risks.length}`;
+  $('rows').innerHTML=risks.map(r=>{
+    const [level,css]=rating(score(r)), [residual,rcss]=rating(score(r,true));
+    const covered=state.checks.filter(q=>q.risks.includes(r.id));
+    return `<tr><td>${r.type==='Problema actual'?'<span class="kind-label">PROBLEMA ACTUAL</span><br>':''}<strong>${esc(r.title)}</strong><small>${esc(r.id)} · ${esc(r.category)} · ${esc(r.area)}</small><small>${covered.length?covered.map(q=>`<a href="#quality" data-open-check="${q.id}">${q.id}</a>`).join(' · '):'Sin prueba vinculada'}</small></td><td data-label="Exposición"><span class="pill ${css}">${level} · ${score(r)}</span><small>P ${r.p} × I ${r.i}</small><small>Residual <span class="pill ${rcss}">${residual} · ${score(r,true)}</span></small></td><td data-label="Responsable">${esc(r.owner||'Sin asignar')}<small>${esc(r.role||'Sin rol')}</small></td><td data-label="Estado">${esc(r.status)}</td><td data-label="Seguimiento">Límite · ${dateLabel(r.dueDate)}<small>Revisión · ${dateLabel(r.reviewDate)}${r.reviewDate&&r.reviewDate<today()&&r.status!=='Cerrado'?' · VENCIDA':''}</small><small>Actualizado · ${dateLabel(r.updatedAt)}</small></td><td><button type="button" data-edit-risk="${r.id}" aria-label="Editar ${esc(r.id)}: ${esc(r.title)}">Editar ↗</button></td></tr>`;
+  }).join('')||'<tr><td colspan="6" class="empty">No hay registros que coincidan con los filtros.</td></tr>';
+  for(const th of document.querySelectorAll('th[data-unused], th[aria-sort]')) { const active=th.querySelector('button')?.dataset.sort===sort.field; th.setAttribute('aria-sort',active?(sort.direction===1?'ascending':'descending'):'none'); }
+  renderChips();
+}
+function renderChips() {
+  const labels={search:'Búsqueda',category:'Categoría',statusFilter:'Estado',ownerFilter:'Responsable',level:'Prioridad inherente',typeFilter:'Tipo'};
+  let html=filters.filter(id=>$(id).value).map(id=>`<button type="button" data-clear="${id}" aria-label="Quitar filtro ${labels[id]}">${labels[id]}: ${esc($(id).value==='_unassigned'?'Sin asignar':$(id).value)} ×</button>`).join('');
+  if(cell) html+=`<button type="button" data-clear="cell">${cell.mode==='residual'?'Residual':'Inherente'} · P${cell.p} × I${cell.i} ×</button>`;
+  if(html) html+='<button type="button" data-clear="all">Limpiar filtros</button>';
+  $('activeFilters').innerHTML=html;
+}
+function renderChecks() {
+  const approved=state.checks.filter(q=>q.status==='Aprobada').length;
+  const failed=state.checks.filter(q=>q.status==='Fallida').length;
+  const percent=state.checks.length?Math.round(approved/state.checks.length*100):0;
+  $('qaProgress').innerHTML=`<div class="progress-heading"><strong>${percent} % aprobado</strong><span class="muted">${approved} aprobadas · ${failed} fallidas · ${state.checks.length-approved-failed} pendientes</span></div><progress aria-label="Porcentaje de pruebas aprobadas" max="100" value="${percent}"></progress>`;
+  $('checks').innerHTML=CHECK_STATUSES.map(status=>{
+    const checks=state.checks.filter(q=>q.status===status);
+    return `<section class="kanban-column" aria-label="${status}"><h3>${status} <span>${checks.length}</span></h3>${checks.map(q=>`<article class="panel check"><p class="eyebrow">${esc(q.id)} · ${esc(q.area)}</p><h3>${esc(q.title)}</h3><p class="muted">${esc(q.criteria)}</p>${q.evidence?`<p class="evidence">${esc(q.evidence)}<small>Evidencia · ${dateLabel(q.evidenceDate)}</small></p>`:''}<div class="risk-links">${q.risks.map(id=>`<button type="button" class="risk-link" data-open-risk="${esc(id)}" aria-label="Abrir riesgo ${esc(id)}">↗ ${esc(id)}</button>`).join('')||'<span class="caption">Sin riesgos vinculados</span>'}</div><div class="checkfoot"><span class="pill ${status==='Aprobada'?'low':status==='Fallida'?'critical':'mid'}">${status}</span><button type="button" data-edit-check="${esc(q.id)}" aria-label="Evaluar ${esc(q.id)}">Evaluar</button></div><p class="caption">Actualizado · ${dateLabel(q.updatedAt)}</p></article>`).join('')||'<p class="empty">Todavía no hay pruebas en este estado.</p>'}</section>`;
+  }).join('');
+}
+function render() {
+  renderMetrics();renderMatrix();
+  refreshOptions('category',state.risks.map(r=>r.category),'Toda categoría');
+  refreshOptions('statusFilter',RISK_STATUSES,'Todo estado');
+  refreshOptions('ownerFilter',state.risks.map(r=>r.owner||'_unassigned'),'Todo responsable');
+  renderRisks();renderChecks();
+}
+function selectTab(qa) { $('risks').hidden=qa; $('quality').hidden=!qa; $('riskTab').setAttribute('aria-pressed',String(!qa)); $('qaTab').setAttribute('aria-pressed',String(qa)); }
+const errorSlot=name=>`<span class="field-error" id="error-${name}"></span>`;
+function input(label,name,value, {full=false,required=false,type='text'}={}) {
+  return `<label class="${full?'full':''}">${label}${required?' *':''}<input name="${name}" type="${type}" value="${esc(value)}" ${type==='text'?'maxlength="4000"':''} ${required?'required':''} aria-describedby="error-${name}">${errorSlot(name)}</label>`;
+}
+function select(label,name,options,value) {
+  return `<label>${label}<select name="${name}" aria-describedby="error-${name}">${options.map(o=>`<option value="${esc(o)}" ${String(o)===String(value)?'selected':''}>${esc(o)}</option>`).join('')}</select>${errorSlot(name)}</label>`;
+}
+function textarea(label,name,value,required=false) { return `<label class="full">${label}${required?' *':''}<textarea name="${name}" rows="3" maxlength="4000" ${required?'required':''} aria-describedby="error-${name}">${esc(value)}</textarea>${errorSlot(name)}</label>`; }
+function openEditor(kind,id) {
+  const record=state[kind].find(r=>r.id===id), r=record||recordDefaults(kind), risk=kind==='risks';
+  editing={kind,id}; focusBefore=document.activeElement;
+  $('dialogTitle').textContent=record?(risk?'Editar riesgo':'Evaluar prueba'):(risk?'Nuevo riesgo':'Nueva prueba');
+  $('recordId').textContent=id||'NUEVO REGISTRO'; $('remove').hidden=!record; showError('formErrors','');
+  let fields=input('Nombre','title',r.title,{full:true,required:true})+input('Área','area',r.area,{required:true});
+  if(risk) {
+    fields+=input('Categoría','category',r.category,{required:true})+select('Tipo','type',TYPES,r.type)+select('Estado','status',RISK_STATUSES,r.status)+input('Persona responsable (nombre y apellido)','owner',r.owner)+input('Rol responsable','role',r.role);
+    fields+=`<fieldset><legend>Riesgo inherente · P × I</legend><div class="score-fields">${select('Probabilidad','p',[1,2,3,4,5],r.p)}${select('Impacto','i',[1,2,3,4,5],r.i)}</div></fieldset><fieldset><legend>Riesgo residual · P × I</legend><div class="score-fields">${select('Probabilidad residual','residualP',[1,2,3,4,5],r.residualP)}${select('Impacto residual','residualI',[1,2,3,4,5],r.residualI)}</div></fieldset>`;
+    fields+=input('Fecha límite de mitigación','dueDate',r.dueDate,{type:'date'})+input('Próxima revisión','reviewDate',r.reviewDate,{type:'date'})+textarea('Consecuencia','consequence',r.consequence,true)+textarea('Medida de mitigación','action',r.action,true)+textarea('Plan de contingencia','contingency',r.contingency);
+    fields+=`<p class="full caption">Pruebas que cubren este riesgo: ${state.checks.filter(q=>q.risks.includes(r.id)).map(q=>esc(q.id)+' · '+esc(q.title)).join('; ')||'Sin pruebas vinculadas. Vincula desde el editor de una prueba.'}</p>`;
+  } else {
+    fields+=select('Resultado','status',CHECK_STATUSES,r.status)+textarea('Criterio medible de aceptación','criteria',r.criteria,true)+textarea('Evidencia u observaciones','evidence',r.evidence)+input('Fecha de evidencia','evidenceDate',r.evidenceDate,{type:'date'});
+    fields+=`<fieldset class="full"><legend>Riesgos que cubre</legend><div class="check-options">${state.risks.map(risk=>`<label><input type="checkbox" name="risks" value="${risk.id}" ${r.risks.includes(risk.id)?'checked':''}>${risk.id} · ${esc(risk.title)}</label>`).join('')}</div>${errorSlot('risks')}</fieldset>`;
   }
- }
- $("matrix").innerHTML=html+"</div>";
- $("clearCell").hidden=!cell;
- if(cell) $("clearCell").textContent="P "+cell[0]+" × I "+cell[1]+" ×";
+  $('fields').innerHTML=`<div class="formgrid">${fields}</div>`;
+  $('history').innerHTML=`<p class="caption">Última actualización · ${dateLabel(r.updatedAt)}</p><details><summary>Historial de cambios (${r.history.length})</summary>${r.history.length?`<ul>${r.history.slice().reverse().map(h=>`<li>${esc(dateLabel(h.date))} · ${esc(fieldNames[h.field]||h.field)}: ${esc(h.before||'vacío')} → ${esc(h.after||'vacío')}</li>`).join('')}</ul>`:'<p class="caption">Sin cambios registrados desde la creación o migración.</p>'}</details>`;
+  $('editor').showModal(); $('editForm').elements.title.focus();
 }
-function renderRisks(){
- const query=normalize($("search").value.trim());
- const selected=$("level").value;
- const risks=state.risks.filter(r=>(!cell||(r.p===cell[0]&&r.i===cell[1]))&&(!selected||rating(score(r))[0]===selected)&&normalize([r.id,r.title,r.area,r.owner].join(" ")).includes(query)).sort((a,b)=>score(b)-score(a));
- $("rows").innerHTML=risks.map(r=>{
-  const [label,style]=rating(score(r));
-  return '<tr><td><strong>'+esc(r.title)+'</strong><small>'+esc(r.id)+' · '+esc(r.area)+'</small></td><td><span class="pill '+style+'">'+label+' · '+score(r)+'</span><small>P '+r.p+' × I '+r.i+'</small></td><td>'+esc(r.owner||"Sin asignar")+'</td><td>'+esc(r.status)+'</td><td><button data-edit-risk="'+esc(r.id)+'" aria-label="Editar '+esc(r.title)+'">Editar</button></td></tr>';
- }).join("")||'<tr><td colspan="5">No hay riesgos que coincidan con los filtros.</td></tr>';
+function restoreFocus() {
+  if(focusBefore?.isConnected) { focusBefore.focus(); return; }
+  for(const name of ['editRisk','editCheck','openRisk','openCheck']) {
+    const value=focusBefore?.dataset?.[name];
+    if(value) { const attr=name.replace(/[A-Z]/g,c=>'-'+c.toLowerCase()), target=document.querySelector(`[data-${attr}="${value}"]`); if(target) {target.focus();return;} }
+  }
+  ($('quality').hidden?$('addRisk'):$('addCheck')).focus();
 }
-function renderChecks(){
- const total=state.checks.length;
- const approved=state.checks.filter(q=>q.status==="Aprobada").length;
- const failed=state.checks.filter(q=>q.status==="Fallida").length;
- const percent=total?Math.round(approved/total*100):0;
- $("qaProgress").innerHTML='<strong>'+percent+' % aprobado</strong><p class="muted">'+approved+' aprobadas · '+failed+' fallidas · '+(total-approved-failed)+' pendientes</p><progress aria-label="Porcentaje de pruebas aprobadas" max="100" value="'+percent+'"></progress>';
- $("checks").innerHTML=state.checks.map(q=>'<article class="panel check"><p class="eyebrow">'+esc(q.id)+' · '+esc(q.area)+'</p><h3>'+esc(q.title)+'</h3><p class="muted">'+esc(q.criteria)+'</p>'+(q.evidence?'<p class="muted"><strong>Evidencia:</strong> '+esc(q.evidence)+'</p>':'')+'<div class="sectionhead"><span class="pill '+(q.status==="Aprobada"?"low":q.status==="Fallida"?"critical":"mid")+'">'+esc(q.status)+'</span><button data-edit-check="'+esc(q.id)+'" aria-label="Evaluar '+esc(q.title)+'">Evaluar</button></div></article>').join("")||'<p class="muted">Agrega una prueba para empezar.</p>';
+function fieldErrors(errors) {
+  for(const slot of $('fields').querySelectorAll('.field-error')) slot.textContent='';
+  for(const field of $('fields').querySelectorAll('[aria-invalid]')) field.removeAttribute('aria-invalid');
+  for(const [name,message] of Object.entries(errors)) { const field=$('editForm').elements.namedItem(name); if(field?.setAttribute) field.setAttribute('aria-invalid','true'); if($('error-'+name)) $('error-'+name).textContent=message; }
+  showError('formErrors',Object.values(errors).join('\n'));
+  const first=$('fields').querySelector('[aria-invalid=true]'); if(first) first.focus();
 }
-function render(){renderMetrics();renderMatrix();renderRisks();renderChecks();}
-function selectTab(qa){
- $("risks").hidden=qa;
- $("quality").hidden=!qa;
- $("riskTab").setAttribute("aria-pressed",!qa);
- $("qaTab").setAttribute("aria-pressed",qa);
-}
-const riskStatuses=["Abierto","En tratamiento","Cerrado"];
-const checkStatuses=["Pendiente","Aprobada","Fallida"];
-function input(label,name,value,full=false,required=false){
- return '<label'+(full?' class="full"':'')+'>'+label+'<input name="'+name+'" value="'+esc(value)+'" maxlength="120"'+(required?' required':'')+'></label>';
-}
-function select(label,name,options,value){
- return '<label>'+label+'<select name="'+name+'">'+options.map(o=>'<option'+(String(o)===String(value)?' selected':'')+'>'+o+'</option>').join("")+'</select></label>';
-}
-function area(label,name,value,required=false){
- return '<label class="full">'+label+'<textarea name="'+name+'" rows="3" maxlength="700"'+(required?' required':'')+'>'+esc(value)+'</textarea></label>';
-}
-function openEditor(kind,id){
- const record=state[kind].find(item=>item.id===id);
- editing={kind,id};
- const r=record||{};
- const isRisk=kind==="risks";
- $("dialogTitle").textContent=record?(isRisk?"Editar riesgo":"Evaluar prueba"):(isRisk?"Nuevo riesgo":"Nueva prueba");
- $("remove").hidden=!record;
- let fields=input("Nombre","title",r.title,true,true)+input("Área","area",r.area,false,true);
- if(isRisk){
-  fields+=input("Responsable","owner",r.owner)+select("Probabilidad","p",[1,2,3,4,5],r.p??3)+select("Impacto","i",[1,2,3,4,5],r.i??3)+select("Estado","status",riskStatuses,r.status??"Abierto")+area("Consecuencia","consequence",r.consequence,true)+area("Medida de mitigación","action",r.action,true);
- }else{
-  fields+=select("Resultado","status",checkStatuses,r.status??"Pendiente")+area("Criterio de aceptación","criteria",r.criteria,true)+area("Evidencia u observaciones","evidence",r.evidence);
- }
- $("fields").innerHTML='<div class="formgrid">'+fields+'</div>';
- $("editor").showModal();
-}
-function nextId(kind){
- const prefix=kind==="risks"?"R-":"Q-";
- const greatest=Math.max(state[kind+"Counter"]||0,...state[kind].map(item=>Number(item.id.slice(2))||0));
- state[kind+"Counter"]=greatest+1;
- return prefix+String(greatest+1).padStart(2,"0");
-}
-$("editForm").addEventListener("submit",event=>{
- event.preventDefault();
- const form=event.currentTarget;
- for(const field of form.querySelectorAll("[required]")) {
-  if(!field.value.trim()){ field.setCustomValidity("Completa este campo."); field.reportValidity(); return; }
- }
- const values=Object.fromEntries(Array.from(new FormData(form),([name,value])=>[name,value.trim()]));
- const {kind,id}=editing;
- if(kind==="risks"){values.p=Number(values.p);values.i=Number(values.i);}
- if(kind==="checks"&&values.status!=="Pendiente"&&!values.evidence){
-  const evidence=form.elements.evidence;
-  evidence.setCustomValidity("Registra una evidencia para este resultado.");
-  evidence.reportValidity();
-  return;
- }
- const index=state[kind].findIndex(item=>item.id===id);
- if(index>=0) state[kind][index]={id,...values};
- else state[kind].push({id:nextId(kind),...values});
- $("editor").close();persist();render();
+$('editForm').addEventListener('submit',async event=>{
+  event.preventDefault(); if(!editing||busy) return;
+  const {kind,id}=editing, next=structuredClone(state), previous=state[kind].find(r=>r.id===id);
+  const data=new FormData(event.currentTarget), values=Object.fromEntries([...data].map(([k,v])=>[k,String(v).trim()]));
+  if(kind==='risks') for(const f of ['p','i','residualP','residualI']) values[f]=Number(values[f]);
+  else values.risks=data.getAll('risks');
+  const record=withHistory(previous,{...recordDefaults(kind),...previous,...values,id:id||nextId(next,kind)});
+  const errors=validateRecord(record,kind,true); fieldErrors(errors); if(Object.keys(errors).length) return;
+  const index=next[kind].findIndex(r=>r.id===id); if(index<0) next[kind].push(record); else next[kind][index]=record;
+  if(await commit(next)) $('editor').close(); else showError('formErrors','No se guardó en el navegador. Consulta el aviso de almacenamiento; los campos siguen disponibles.');
 });
-$("editForm").addEventListener("input",event=>event.target.setCustomValidity?.(""));
-$("editForm").addEventListener("change",event=>{
- if(event.target.name==="status") event.currentTarget.elements.evidence?.setCustomValidity("");
+$('editForm').addEventListener('input',event=>{ event.target.removeAttribute('aria-invalid'); if($('error-'+event.target.name)) $('error-'+event.target.name).textContent=''; });
+$('remove').onclick=async()=>{
+  if(!editing||!confirm('¿Eliminar este registro? Se quitarán también sus vínculos. Exporta un respaldo si lo necesitas.')) return;
+  const {kind,id}=editing,next=structuredClone(state); next[kind]=next[kind].filter(r=>r.id!==id);
+  if(kind==='risks') next.checks=next.checks.map(q=>q.risks.includes(id)?withHistory(q,{risks:q.risks.filter(r=>r!==id)}):q);
+  if(await commit(next)) $('editor').close();
+};
+$('close').onclick=()=>$('editor').close();
+$('editor').addEventListener('close',()=>{ editing=null; restoreFocus(); });
+for(const id of ['editor','importDialog']) $(id).addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&id==='editor') { event.preventDefault(); $('editForm').requestSubmit(); }
+  if(event.key==='Tab') {
+    const nodes=[...$(id).querySelectorAll('button,input,select,textarea,a[href],summary')].filter(n=>!n.disabled&&n.getClientRects().length);
+    const first=nodes[0],last=nodes.at(-1);
+    if(event.shiftKey&&document.activeElement===first) {event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&document.activeElement===last) {event.preventDefault();first.focus();}
+  }
 });
-$("remove").onclick=()=>{
- if(!confirm("¿Eliminar este registro?"))return;
- const {kind,id}=editing;
- state[kind]=state[kind].filter(item=>item.id!==id);
- $("editor").close();persist();render();
+$('riskTab').onclick=()=>selectTab(false); $('qaTab').onclick=()=>selectTab(true);
+$('addRisk').onclick=()=>openEditor('risks'); $('addCheck').onclick=()=>openEditor('checks');
+for(const id of filters) $(id).addEventListener(id==='search'?'input':'change',renderRisks);
+$('activeFilters').onclick=event=>{
+  const button=event.target.closest('[data-clear]'); if(!button) return; const id=button.dataset.clear;
+  if(id==='all') {filters.forEach(f=>$(f).value='');cell=null;} else if(id==='cell') cell=null; else $(id).value='';
+  renderMatrix();renderRisks(); $('search').focus();
 };
-$("close").onclick=()=>$("editor").close();
-$("riskTab").onclick=()=>selectTab(false);
-$("qaTab").onclick=()=>selectTab(true);
-$("addRisk").onclick=()=>openEditor("risks");
-$("addCheck").onclick=()=>openEditor("checks");
-$("search").oninput=renderRisks;
-$("level").onchange=renderRisks;
-$("clearCell").onclick=()=>{cell=null;renderMatrix();renderRisks();};
-$("matrix").onclick=event=>{
- const button=event.target.closest("[data-cell]");
- if(!button)return;
- const [p,i]=button.dataset.cell.split(",").map(Number);
- cell=cell?.[0]===p&&cell?.[1]===i?null:[p,i];
- renderMatrix();renderRisks();
- $("matrix").querySelector('[data-cell="'+p+','+i+'"]').focus();
+$('matrix').onclick=event=>{
+  const button=event.target.closest('[data-cell]'); if(!button) return;
+  const [mode,p,i]=button.dataset.cell.split(','), value={mode,p:Number(p),i:Number(i)};
+  cell=JSON.stringify(cell)===JSON.stringify(value)?null:value; renderMatrix();renderRisks();
+  $('matrix').querySelector(`[data-cell="${button.dataset.cell}"]`).focus();
 };
-$("rows").onclick=event=>{
- const button=event.target.closest("[data-edit-risk]");
- if(button)openEditor("risks",button.dataset.editRisk);
+document.querySelector('thead').onclick=event=>{const button=event.target.closest('[data-sort]');if(!button)return; sort={field:button.dataset.sort,direction:sort.field===button.dataset.sort?-sort.direction:1};renderRisks();};
+document.addEventListener('click',event=>{
+  const risk=event.target.closest('[data-edit-risk],[data-open-risk]'),check=event.target.closest('[data-edit-check],[data-open-check]');
+  if(risk) {event.preventDefault();openEditor('risks',risk.dataset.editRisk||risk.dataset.openRisk);}
+  else if(check) {event.preventDefault();openEditor('checks',check.dataset.editCheck||check.dataset.openCheck);}
+});
+$('export').onclick=async()=>{
+  download(exportCSV(state,$('delimiter').value),`EventFlow_Respaldo_${today()}.csv`,'text/csv;charset=utf-8');
+  if(corrupt) {toast('Se exportó la vista de ejemplo; los datos corruptos se conservan por separado.');return;}
+  const next=structuredClone(state); next.lastExportAt=new Date().toISOString(); next.exportedRevision=next.revision;
+  if(await commit(next,{dataChange:false})) toast('CSV generado con riesgos y pruebas. Comprueba la descarga.');
 };
-$("checks").onclick=event=>{
- const button=event.target.closest("[data-edit-check]");
- if(button)openEditor("checks",button.dataset.editCheck);
+$('import').onclick=()=>{
+  focusBefore=document.activeElement;preview=null;$('csvFile').value='';$('applyImport').disabled=true;$('importPreview').textContent='';showError('importError','');
+  $('importSeparator').textContent=`Separador seleccionado: ${$('delimiter').value===';'?'punto y coma':'coma'}. Cambia CSV en la barra principal si tu archivo usa otro.`;
+  $('importDialog').showModal();
 };
-function csvField(value){
- const raw=String(value??"");
- const safe=/^[\s]*[=+@-]/.test(raw)?"'"+raw:raw;
- return '"'+safe.replace(/"/g,'""')+'"';
+let importRead=0;
+$('csvFile').onchange=async()=>{
+  const read=++importRead;preview=null;$('applyImport').disabled=true;$('importPreview').textContent='';showError('importError','');
+  const file=$('csvFile').files[0];if(!file)return;
+  try {
+    if(file.size>2*1024*1024)throw new Error('El archivo supera 2 MB.');
+    const text=await file.text();if(read!==importRead)return;
+    preview=previewImport(text,state,$('delimiter').value);
+    $('importPreview').innerHTML=`<p>${preview.changes.length} cambios propuestos. No se ha guardado nada.</p>`+(preview.changes.length?`<ul>${preview.changes.map(c=>`<li>${c.action} ${esc(c.id)} · ${esc(c.title)}</li>`).join('')}</ul>`:'<p class="muted">El archivo coincide con los datos actuales.</p>');
+    $('applyImport').disabled=!preview.changes.length;
+  } catch(error) {showError('importError',error.message);}
+};
+$('applyImport').onclick=async()=>{if(preview&&await commit(preview.state))$('importDialog').close();};
+for(const id of ['closeImport','cancelImport'])$(id).onclick=()=>$('importDialog').close();
+$('importDialog').addEventListener('close',()=>{preview=null;importRead++;restoreFocus();});
+$('reset').onclick=async()=>{
+  if(!confirm('¿Restablecer los datos de ejemplo? Se reemplazarán todos los registros locales. Exporta primero si quieres conservarlos.'))return;
+  if(await commit(createExampleState(),{reset:true})) {cell=null;filters.forEach(id=>$(id).value='');render();}
+};
+$('downloadRaw').onclick=()=>{
+  try{download(localStorage.getItem(STORAGE_KEY)||'null',`EventFlow_datos_guardados_${today()}.json`,'application/json');}catch(error){toast(error.message);}
+};
+async function syncExternal(force=false) {
+  if(!force&&($('editor').open||$('importDialog').open||memoryOnly)) {pendingExternal=true;notice('Otra pestaña cambió los datos. Conserva tus campos y cierra el diálogo antes de cargar la nueva versión.',true);return;}
+  try {persisted=await storage.getState();if(!persisted)throw new Error('Otra pestaña eliminó el almacenamiento. Restablece para continuar.');state=structuredClone(persisted);corrupt=memoryOnly=pendingExternal=false;notice('');render();toast('Datos sincronizados desde otra pestaña.');}
+  catch(error){corrupt=true;notice('No se pudo cargar el cambio de otra pestaña. Tu vista actual se conserva. Descarga la copia guardada o restablece.\n'+error.message);}
 }
-$("export").onclick=()=>{
- const lines=[
-  ["Tipo","ID","Nombre","Área","Probabilidad","Impacto","Puntaje","Prioridad","Responsable","Estado","Consecuencia o criterio","Mitigación o evidencia"],
-  ...state.risks.map(r=>["Riesgo",r.id,r.title,r.area,r.p,r.i,score(r),rating(score(r))[0],r.owner,r.status,r.consequence,r.action]),
-  ...state.checks.map(q=>["Prueba",q.id,q.title,q.area,"","","","","",q.status,q.criteria,q.evidence])
- ];
- const blob=new Blob(["\ufeff",lines.map(row=>row.map(csvField).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"});
- const url=URL.createObjectURL(blob);
- const link=document.createElement("a");
- link.href=url;link.download="EventFlow_Riesgos_y_Calidad.csv";link.click();
- setTimeout(()=>URL.revokeObjectURL(url),1000);
-};
-render();
+window.addEventListener('storage',event=>{if(event.key===STORAGE_KEY||event.key===null)syncExternal();});
+$('reloadExternal').onclick=()=>{if($('editor').open||$('importDialog').open){toast('Cierra primero el diálogo para conservar el control de tus cambios.');return;}if(memoryOnly&&!confirm('Hay cambios solo en memoria. ¿Descartarlos y cargar la otra pestaña? Exporta antes si los necesitas.'))return;syncExternal(true);};
+window.addEventListener('beforeunload',event=>{if(memoryOnly){event.preventDefault();event.returnValue='';}});
+const printDetails=[];
+window.addEventListener('beforeprint',()=>{for(const d of document.querySelectorAll('.guide details')){printDetails.push([d,d.open]);d.open=true;}});
+window.addEventListener('afterprint',()=>{for(const [d,open]of printDetails.splice(0))d.open=open;});
+$('print').onclick=()=>window.print();
+setInterval(()=>{if(state)renderMetrics();},60000);
+await initialize();
