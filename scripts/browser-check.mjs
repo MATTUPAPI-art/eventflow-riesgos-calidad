@@ -21,7 +21,6 @@ try {
   await check('Carga: 22 riesgos, 22 pruebas, 50 celdas y 7 indicadores',async()=>{
     assert.equal(await page.locator('#rows tr').count(),22); assert.equal(await page.locator('.check').count(),22);assert.equal(await page.locator('[data-cell]').count(),50);assert.equal(await page.locator('.metric').count(),7);assert.match(await page.locator('.metric').last().innerText(),/0 %/);
   });
-  await page.screenshot({path:'docs/screenshot.png',fullPage:true});
   await check('Filtros, chips, celda inherente/residual y orden por columna',async()=>{
     await page.locator('#search').fill('R-03');assert.equal(await page.locator('#rows tr').count(),1);await page.locator('[data-clear=all]').click();
     await page.locator('#category').selectOption('Privacidad');assert.ok(await page.locator('#rows tr').count()<22);await page.locator('#statusFilter').selectOption('Abierto');await page.locator('#ownerFilter').selectOption('Lucía Demo');await page.locator('#level').selectOption('Alto');assert.ok(await page.locator('[data-clear]').count()>=4);await page.locator('[data-clear=all]').click();
@@ -89,7 +88,7 @@ try {
       await page.locator('#addCheck').click();const dialogReport=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();assert.deepEqual(dialogReport.violations.map(v=>v.id),[]);await closeEditor();
       await page.screenshot({path:`artifacts/mobile-${colorScheme}.png`,fullPage:true});
     }
-    await page.setViewportSize({width:1440,height:1320});await page.emulateMedia({colorScheme:'dark'});await page.locator('#riskTab').click();await page.screenshot({path:'docs/screenshot.png'});
+    await page.setViewportSize({width:1440,height:1320});await page.emulateMedia({colorScheme:'dark'});await page.locator('#riskTab').click();
     await page.emulateMedia({media:'print'});assert.equal(await page.locator('#quality').isVisible(),true);assert.equal(await page.locator('#risks').isVisible(),true);await page.pdf({path:'artifacts/EventFlow.pdf',format:'A4',printBackground:true});await page.emulateMedia({media:'screen'});
   });
   await check('Datos corruptos no se sobrescriben; recuperación y almacenamiento bloqueado',async()=>{
