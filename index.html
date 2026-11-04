@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Matriz de riesgos y control de calidad para EventFlow AI"><title>EventFlow AI · Riesgos y calidad</title><link rel="stylesheet" href="style.css"><script defer src="app.js"></script></head>
+<body>
+<header class="top"><div class="wrap topinner"><div class="brand"><span class="mark" aria-hidden="true">E</span><div><strong>EventFlow <em>AI</em></strong><small>CONTROL DE PROYECTO</small></div></div><button id="export">↓ Exportar CSV</button></div></header>
+<main class="wrap">
+<section class="hero"><p class="eyebrow">GESTIÓN OPERATIVA <span></span> COCHABAMBA</p><h1>Riesgos y <i>calidad</i></h1><p>Evalúa qué puede fallar, asigna medidas y comprueba que la web, la app móvil y la distribución del salón estén listas para el piloto.</p></section>
+<div class="metrics" id="metrics"></div>
+<nav class="tabs" aria-label="Secciones"><button id="riskTab" aria-pressed="true">01 &nbsp; Matriz de riesgos</button><button id="qaTab" aria-pressed="false">02 &nbsp; Control de calidad</button></nav>
+<section id="risks">
+<div class="riskgrid">
+<article class="panel matrixpanel"><p class="eyebrow">EVALUACIÓN</p><h2>Mapa de riesgos</h2><p class="muted">Selecciona una celda para filtrar el registro.</p><div id="matrix"></div><p class="scale">Probabilidad × impacto · Escala de 1 a 5</p></article>
+<article class="panel guide"><p class="eyebrow">CRITERIOS DE PUNTUACIÓN</p><h2>Cómo se prioriza</h2><p class="muted">Usa 1 para el valor más bajo y 5 para el más alto. Los valores iniciales son estimaciones para el piloto.</p><div class="legend"><span class="low">Bajo · 1–4</span><span class="mid">Medio · 5–9</span><span class="high">Alto · 10–15</span><span class="critical">Crítico · 16–25</span></div><p class="muted">Impacto 1: molestia menor. Impacto 5: afecta la seguridad, expone datos o impide una operación esencial.</p></article>
+</div>
+<div class="sectionhead"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Registro de riesgos</h2></div><button class="primary" id="addRisk">+ Nuevo riesgo</button></div>
+<div class="toolbar"><input id="search" type="search" placeholder="Buscar riesgo, área o responsable…" aria-label="Buscar riesgos"><select id="level" aria-label="Filtrar por prioridad"><option value="">Todas las prioridades</option><option>Crítico</option><option>Alto</option><option>Medio</option><option>Bajo</option></select><button id="clearCell" hidden></button></div>
+<div class="panel tablebox"><table><thead><tr><th>Riesgo</th><th>Prioridad</th><th>Responsable</th><th>Estado</th><th><span class="sr">Acciones</span></th></tr></thead><tbody id="rows"></tbody></table></div>
+</section>
+<section id="quality" hidden><div class="sectionhead"><div><p class="eyebrow">VALIDACIÓN DEL PILOTO</p><h2>Pruebas de aceptación</h2></div><button class="primary" id="addCheck">+ Nueva prueba</button></div><div id="qaProgress" class="panel progressbox"></div><div id="checks" class="checkgrid"></div></section>
+<footer>EventFlow AI · Los cambios se guardan en este navegador. Exporta el CSV para compartir tu avance.</footer>
+</main>
+<dialog id="editor"><form id="editForm"><div class="modalhead"><h2 id="dialogTitle"></h2><button type="button" id="close" aria-label="Cerrar">×</button></div><div id="fields"></div><div class="modalfoot"><button type="button" id="remove">Eliminar</button><button type="submit" class="primary">Guardar cambios</button></div></form></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+</body></html>
