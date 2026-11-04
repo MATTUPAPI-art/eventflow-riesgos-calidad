@@ -31,6 +31,7 @@ test('altos requieren persona y fecha; resultados requieren evidencia fechada', 
   const r={...risk(),p:4,i:5,owner:'Equipo web'};
   assert.ok(validateRecord(r,'risks',true).owner); assert.ok(validateRecord(r,'risks',true).dueDate);
   assert.deepEqual(validateRecord({...r,owner:'Lucía Demo',dueDate:'2026-11-20'},'risks',true),{});
+  assert.ok(validateRecord({...risk(),type:'Problema actual'},'risks',true).p);
   const q={...recordDefaults('checks'),id:'Q-01',title:'Test',area:'QA',criteria:'Medir',status:'Aprobada'};
   assert.ok(validateRecord(q,'checks',true).evidence); assert.ok(validateRecord(q,'checks',true).evidenceDate);
 });
@@ -65,6 +66,12 @@ test('CSV escapa comillas, saltos, separadores y fórmulas; ida y vuelta sin pé
 test('CSV rechaza comillas, encabezados, duplicados y puntajes corruptos', () => {
   assert.throws(()=>parseCSV('"sin cierre')); assert.throws(()=>parseCSV('"a"b'));
   const s=fixture(), csv=exportCSV(s); assert.throws(()=>previewImport(csv,s,',')); assert.throws(()=>previewImport(csv.replace('"p"','"prob"'),s));
-  const rows=csv.split('\r\n'); rows.splice(3,0,rows[2]); assert.throws(()=>previewImport(rows.join('\r\n'),s),/duplicado/);
+  const rows=csv.split('\r\n'); const position=rows.findIndex(row=>row.startsWith('"R-01"')); rows.splice(position+1,0,rows[position]); assert.throws(()=>previewImport(rows.join('\r\n'),s),/duplicado/);
   assert.throws(()=>previewImport(csv.replace('"3";"3"','"8";"3"'),s));
+});
+test('CSV preserva contadores aunque el último ID se haya eliminado',()=>{
+  const s=fixture();s.risksCounter=100;s.checksCounter=30;
+  const restored=previewImport(exportCSV(s),fixture()).state;
+  assert.equal(nextId(restored,'risks'),'R-101');assert.equal(nextId(restored,'checks'),'Q-31');
+  assert.throws(()=>previewImport('"# EVENTFLOW RISKS v2"\n"# EVENTFLOW CHECKS v2"\n'+exportCSV(s).split('"# EVENTFLOW CHECKS v2"')[1],fixture()),/encabezados/);
 });

@@ -27,6 +27,7 @@ export function validateRecord(r, kind, enforce = false) {
   if (kind === 'risks') {
     if (!TYPES.includes(r.type)) errors.type = 'Tipo no permitido.';
     for (const f of ['p', 'i', 'residualP', 'residualI']) if (!Number.isInteger(r[f]) || r[f] < 1 || r[f] > 5) errors[f] = 'Selecciona un entero entre 1 y 5.';
+    if (enforce && r.type === 'Problema actual' && r.p !== 5) errors.p = 'Un problema actual ya ocurre: usa probabilidad 5.';
     for (const f of ['dueDate', 'reviewDate']) if (r[f] !== '' && !isDate(r[f])) errors[f] = 'Fecha inválida.';
     if (enforce && Math.max(score(r), score(r, true)) >= 10) {
       if (!text(r.owner) || !/^\p{L}[\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}'’.-]+)+$/u.test(r.owner.trim()) || /equipo|responsable|administraci[oó]n|sin asignar|coordinaci[oó]n/i.test(r.owner)) errors.owner = 'Alto y Crítico requieren nombre y apellido de una persona.';
