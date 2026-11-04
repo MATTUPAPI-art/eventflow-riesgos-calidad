@@ -1,0 +1,9 @@
+node_modules/
+artifacts/
+.env
+.env.*
+!.env.example
+firebase-config.local.js
+*.log
+.DS_Store
+Thumbs.db
