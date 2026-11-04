@@ -45,7 +45,7 @@ La primera medición dio 79/100/100 por CLS 0,536 al insertar indicadores. Se co
 - Búsqueda de patrones habituales de claves privadas y tokens en las fuentes: sin coincidencias; dependencias y artefactos excluidos.
 - About configurado en el fork autorizado. El original es de solo lectura para la sesión; `docs/ABOUT.md` contiene descripción, URL y topics para el propietario.
 - Captura del README e imagen social creadas desde contenido ficticio mediante Chrome/HTML/CSS, sin fotos ni datos personales reales.
-- Workflow `Tests` ejecuta la suite de lógica en cada push/PR. Su resultado remoto se consulta después de subir la rama.
+- Workflow `Tests` ejecuta la suite de lógica en cada push/PR. La [ejecución remota 41924209441](https://github.com/mattupapi/eventflow-riesgos-calidad/actions/runs/41924209441) del commit `5d93f59` terminó correctamente: 14 pruebas aprobadas, 0 fallidas. La comprobación se hizo con GitHub CLI después del push al fork.
 
 ## Lo que no se verificó
 
