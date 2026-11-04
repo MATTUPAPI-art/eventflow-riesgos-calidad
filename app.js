@@ -54,11 +54,12 @@ function renderMetrics() {
     [open.filter(r=>score(r)>=16).length,'Críticos sin cerrar','Prioridad inherente'],
     [open.filter(r=>!r.owner.trim()).length,'Sin responsable','Registros abiertos'],
     [open.filter(r=>r.reviewDate && r.reviewDate<today()).length,'Revisión vencida','Según fecha local'],
-    [`${state.checks.filter(q=>q.status==='Aprobada').length}/${state.checks.length}`,'Pruebas aprobadas','Con evidencia fechada'],
+    [`${state.checks.filter(q=>q.status==='Aprobada').length}/${state.checks.length}`,'Pruebas aprobadas','Resultados registrados'],
     [state.risks.filter(r=>!state.checks.some(q=>q.risks.includes(r.id))).length,'Riesgos sin prueba','Vínculo de cobertura'],
     [`${reduction} %`,'Reducción estimada',`${inherent} → ${residual} puntos`]
   ];
   $('metrics').innerHTML = metrics.map(([n,label,detail],i)=>`<div class="metric ${i===1?'emphasis':''}"><strong>${n}</strong><span>${label}</span><small>${detail}</small></div>`).join('');
+  $('metrics').setAttribute('aria-busy','false');
   $('asOf').textContent = `Actualizado · ${dateLabel(state.updatedAt)}`;
   $('backup').textContent = memoryOnly ? 'Cambios solo en memoria. Exporta antes de salir.' : backupMessage(state) || `Respaldo exportado · ${dateLabel(state.lastExportAt)}`;
 }
@@ -82,7 +83,7 @@ function renderMatrix() {
 function refreshOptions(id, values, label) {
   const selected=$(id).value;
   $(id).innerHTML=`<option value="">${label}</option>`+[...new Set(values)].sort((a,b)=>a.localeCompare(b,'es')).map(v=>`<option value="${esc(v)}">${esc(v==='_unassigned'?'Sin asignar':v)}</option>`).join('');
-  $(id).value=selected;
+  $(id).value=[...$(id).options].some(option=>option.value===selected)?selected:'';
 }
 function renderRisks() {
   const query=normalize($('search').value.trim());
