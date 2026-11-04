@@ -9,7 +9,7 @@ export const normalize = value => String(value).normalize('NFD').replace(/[\u030
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 export const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 export const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
-const isTimestamp = v => typeof v === 'string' && !Number.isNaN(Date.parse(v));
+const isTimestamp = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(v) && !Number.isNaN(Date.parse(v));
 const text = (v, max = 4000) => typeof v === 'string' && v.length <= max;
 export function recordDefaults(kind) {
   const common = { title: '', area: '', updatedAt: '', history: [] };
@@ -46,6 +46,7 @@ export function validateState(s, enforce = false) {
   const errors = [];
   if (!s || s.schemaVersion !== SCHEMA_VERSION || !Array.isArray(s.risks) || !Array.isArray(s.checks)) return ['Estructura o versión de esquema no compatible.'];
   for (const key of ['revision', 'exportedRevision', 'risksCounter', 'checksCounter']) if (!Number.isSafeInteger(s[key]) || s[key] < 0) errors.push(`Metadato inválido: ${key}`);
+  if (s.exportedRevision > s.revision) errors.push('La revisión exportada no puede superar la revisión actual.');
   if (s.lastExportAt !== null && !isTimestamp(s.lastExportAt)) errors.push('Fecha de respaldo inválida.');
   if (s.updatedAt !== '' && !isTimestamp(s.updatedAt)) errors.push('Fecha del estado inválida.');
   for (const kind of ['risks', 'checks']) {
